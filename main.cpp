@@ -1,11 +1,28 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <string>
+#include <cstdlib>
+#include <csignal>
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
 #include "TaskQueue.h"
+#include "Log.h"
+
+
+static std::string EnvStr(const char *name, const std::string &default_value) {
+    const char *v = std::getenv(name);
+    return v ? v : default_value;
+}
+
+static int EnvInt(const char *name, int default_value) {
+    const char *v = std::getenv(name);
+    if (!v) return default_value;
+    try { return std::stoi(v); } catch (...) { return default_value; }
+}
+
 
 using json = nlohmann::json;
 
@@ -18,9 +35,23 @@ static void Text(httplib::Response &res, int code, const std::string &text) {
     res.set_content(text, "text/plain");
 }
 
+static httplib::Server *g_server = nullptr;
+
 int main() {
-    TaskQueue task_queue(std::chrono::seconds(30));
+    const std::string host = EnvStr("HOST", "0.0.0.0");
+    const int port = EnvInt("PORT", 8080);
+    const int timeout = EnvInt("TASK_TIMEOUT", 300);
+
+    TaskQueue task_queue(std::chrono::seconds{timeout});
     httplib::Server svr;
+    g_server = &svr;
+    std::signal(SIGTERM, [](int) { if (g_server) g_server->stop(); });
+    std::signal(SIGINT, [](int) { if (g_server) g_server->stop(); });
+
+    svr.set_logger([](const httplib::Request &req, const httplib::Response &res) {
+        Log(req.method + " " + req.path + " -> " + std::to_string(res.status));
+    });
+
 
     // ---------- Client ----------
     svr.Post("/tasks", [&](const httplib::Request &req, httplib::Response &res) {
@@ -87,8 +118,17 @@ int main() {
         }
     });
 
-    svr.listen("0.0.0.0", 8080);
+    Log("listening on " + host + ":" + std::to_string(port) +
+    ", timeout " + std::to_string(timeout) + "s");
+
+    const bool ok = svr.listen(host, port);
 
     running = false;
     updater.join();
+
+    if (!ok) {
+        Log("cannot listen on " + host + ":" + std::to_string(port));
+        return 1;
+    }
+    Log("stopped");
 }

@@ -1,4 +1,5 @@
 #include "TaskQueue.h"
+#include "Log.h"
 
 std::string StatusToString(Status s) {
     switch (s) {
@@ -23,6 +24,8 @@ size_t TaskQueue::addTask(std::string text) {
     tasks_[id] = std::move(text);
     status_[id] = Status::IN_QUEUE;
     main_queue_.insert(id);
+
+    Log("task " + std::to_string(real_id) + " added");
     return real_id;
 }
 
@@ -36,7 +39,10 @@ std::optional<Status> TaskQueue::getStatus(const size_t real_id) {
 
 bool TaskQueue::cancelTask(size_t real_id) {
     std::lock_guard lock(m_);
-    return removeTask(real_id);
+
+    bool ok = removeTask(real_id);
+    if (ok) Log("task " + std::to_string(real_id) + " cancelled");
+    return ok;
 }
 
 std::optional<std::string> TaskQueue::getAnswer(const size_t real_id) {
@@ -68,6 +74,7 @@ std::optional<std::pair<size_t, std::string> > TaskQueue::getTask() {
     work_queue_.push(id);
     start_time_[id] = Clock::now();
 
+    Log("task " + std::to_string(to_real_[id]) + " taken");
     return std::pair(id, tasks_[id]);
 }
 
@@ -81,6 +88,7 @@ bool TaskQueue::setAnswer(const size_t id, std::string answer) {
     status_[id] = Status::COMPLETED;
     answers_[id] = std::move(answer);
 
+    Log("task " + std::to_string(to_real_[id]) + " completed");
     return true;
 }
 
@@ -89,7 +97,10 @@ bool TaskQueue::releaseTask(const size_t id) {
     if (!to_real_.contains(id) || status_[id] != Status::IN_PROGRESS) {
         return false;
     }
+    Log("task " + std::to_string(to_real_[id]) + " released by worker");
+
     recreateTask(id);
+
     return true;
 }
 
@@ -106,6 +117,8 @@ void TaskQueue::updateWorkQueue() {
             break;
         }
         work_queue_.pop();
+
+        Log("task " + std::to_string(to_real_[id]) + " timed out, requeued");
         recreateTask(id);
     }
 }
